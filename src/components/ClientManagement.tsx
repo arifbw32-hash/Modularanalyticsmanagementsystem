@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Client } from '../types';
+import { Client, Sector } from '../types';
 import { Pencil, Trash2, Plus, Settings, Search } from 'lucide-react';
 
 interface ClientManagementProps {
   clients: Client[];
+  sectors: Sector[];
   onAdd: (client: Client) => void;
   onUpdate: (clientId: string, updates: Partial<Client>) => void;
   onDelete: (clientId: string) => void;
@@ -11,7 +12,8 @@ interface ClientManagementProps {
 }
 
 export function ClientManagement({ 
-  clients, 
+  clients,
+  sectors,
   onAdd, 
   onUpdate, 
   onDelete,
@@ -24,7 +26,8 @@ export function ClientManagement({
     client_id: '',
     name: '',
     project_id: 0,
-    category: ''
+    category: '',
+    sector_id: ''
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -34,7 +37,8 @@ export function ClientManagement({
       onUpdate(editingClient.client_id, {
         name: formData.name,
         project_id: formData.project_id,
-        category: formData.category
+        category: formData.category,
+        sector_id: formData.sector_id
       });
     } else {
       const newClient: Client = {
@@ -42,6 +46,7 @@ export function ClientManagement({
         name: formData.name,
         project_id: formData.project_id,
         category: formData.category,
+        sector_id: formData.sector_id,
         modules: {}
       };
       onAdd(newClient);
@@ -57,11 +62,12 @@ export function ClientManagement({
         client_id: client.client_id,
         name: client.name,
         project_id: client.project_id,
-        category: client.category || ''
+        category: client.category || '',
+        sector_id: client.sector_id || ''
       });
     } else {
       setEditingClient(null);
-      setFormData({ client_id: '', name: '', project_id: 0, category: '' });
+      setFormData({ client_id: '', name: '', project_id: 0, category: '', sector_id: '' });
     }
     setIsModalOpen(true);
   };
@@ -69,7 +75,7 @@ export function ClientManagement({
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingClient(null);
-    setFormData({ client_id: '', name: '', project_id: 0, category: '' });
+    setFormData({ client_id: '', name: '', project_id: 0, category: '', sector_id: '' });
   };
 
   // Filter clients based on search query
@@ -252,6 +258,23 @@ export function ClientManagement({
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   className="w-full px-3 py-2 border rounded-lg"
                 />
+              </div>
+              <div className="mb-6">
+                <label className="block text-gray-700 mb-2">
+                  Sector
+                </label>
+                <select
+                  value={formData.sector_id}
+                  onChange={(e) => setFormData({ ...formData, sector_id: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
+                  <option value="">Select a sector</option>
+                  {sectors.map(sector => (
+                    <option key={sector.id} value={sector.id}>
+                      {sector.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="flex gap-3 justify-end">
                 <button

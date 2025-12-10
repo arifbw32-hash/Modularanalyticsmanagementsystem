@@ -1,28 +1,90 @@
 import { useState, useEffect } from 'react';
-import { Client, MasterModule, ModuleInstance, AppState } from './types';
-import { storage } from './lib/storage';
+import { Client, Sector, MasterModule, ModuleInstance, AppState, ModuleConfigValue } from './types';
+import { loadState, saveState, isAuthenticated, login as authLogin, logout as authLogout } from './lib/storage';
+import { Login } from './components/Login';
+import { Sidebar } from './components/Sidebar';
+import { Dashboard } from './components/Dashboard';
+import { SectorManagement } from './components/SectorManagement';
 import { ClientManagement } from './components/ClientManagement';
 import { MasterModuleManagement } from './components/MasterModuleManagement';
+import { SectorModuleAssignment } from './components/SectorModuleAssignment';
 import { ModuleAssignment } from './components/ModuleAssignment';
-import { ModuleConfiguration } from './components/ModuleConfiguration';
+import { ModuleConfigEditor } from './components/ModuleConfigEditor';
 import { DebugExport } from './components/DebugExport';
-import { Users, Package, Database } from 'lucide-react';
 
 type View = 
+  | { type: 'dashboard' }
+  | { type: 'sectors' }
   | { type: 'clients' }
   | { type: 'modules' }
-  | { type: 'assignment'; clientId: string }
-  | { type: 'configuration'; clientId: string; moduleId: string }
+  | { type: 'sector-assignment'; sectorId: string }
+  | { type: 'sector-config'; sectorId: string; moduleId: string }
+  | { type: 'client-assignment'; clientId: string }
+  | { type: 'client-config'; clientId: string; moduleId: string }
   | { type: 'debug' };
 
 export default function App() {
-  const [state, setState] = useState<AppState>(() => storage.load());
-  const [currentView, setCurrentView] = useState<View>({ type: 'clients' });
+  const [authenticated, setAuthenticated] = useState(isAuthenticated());
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved === 'true';
+  });
+  const [state, setState] = useState<AppState>(() => loadState());
+  const [currentView, setCurrentView] = useState<View>({ type: 'dashboard' });
+
+  // Apply dark mode
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('darkMode', darkMode.toString());
+  }, [darkMode]);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
-    storage.save(state);
+    saveState(state);
   }, [state]);
+
+  // Authentication
+  const handleLogin = (username: string, password: string) => {
+    if (authLogin(username, password)) {
+      setAuthenticated(true);
+    } else {
+      alert('Invalid credentials. Please use admin/admin123');
+    }
+  };
+
+  const handleLogout = () => {
+    authLogout();
+    setAuthenticated(false);
+    setCurrentView({ type: 'dashboard' });
+  };
+
+  // Sector operations
+  const addSector = (sector: Sector) => {
+    setState(prev => ({
+      ...prev,
+      sectors: [...prev.sectors, sector]
+    }));
+  };
+
+  const updateSector = (sectorId: string, updates: Partial<Sector>) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.map(s => 
+        s.id === sectorId ? { ...s, ...updates } : s
+      )
+    }));
+  };
+
+  const deleteSector = (sectorId: string) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.filter(s => s.id !== sectorId)
+    }));
+  };
 
   // Client operations
   const addClient = (client: Client) => {
@@ -67,36 +129,161 @@ export default function App() {
 
   const deleteModule = (moduleId: number) => {
     setState(prev => {
-      // Also remove from all clients
+      const moduleIdStr = moduleId.toString();
+      
+      // Remove from all sectors and clients
+      const updatedSectors = prev.sectors.map(sector => {
+        const { [moduleIdStr]: removed, ...remainingModules } = sector.modules;
+        return { ...sector, modules: remainingModules };
+      });
+
       const updatedClients = prev.clients.map(client => {
-        const { [moduleId.toString()]: removed, ...remainingModules } = client.modules;
+        const { [moduleIdStr]: removed, ...remainingModules } = client.modules;
         return { ...client, modules: remainingModules };
       });
 
       return {
         ...prev,
         masterModules: prev.masterModules.filter(m => m.id !== moduleId),
+        sectors: updatedSectors,
         clients: updatedClients
       };
     });
   };
 
-  // Module assignment operations
-  const assignModule = (clientId: string, moduleId: string) => {
+  // Sector module assignment
+  const assignSectorModule = (sectorId: string, moduleId: string) => {
     setState(prev => {
       const module = prev.masterModules.find(m => m.id.toString() === moduleId);
       if (!module) return prev;
 
-      // Initialize config values with defaults
-      const configValues: Record<string, any> = {};
+      const configValues: ModuleConfigValue = {};
       module.config_schema.forEach(field => {
-        configValues[field.id] = field.default;
+        configValues[field.name] = field.default !== undefined ? field.default : '';
       });
 
       const moduleInstance: ModuleInstance = {
         is_active: false,
         prompt: '',
         config_values: configValues
+      };
+
+      return {
+        ...prev,
+        sectors: prev.sectors.map(s =>
+          s.id === sectorId
+            ? { ...s, modules: { ...s.modules, [moduleId]: moduleInstance } }
+            : s
+        )
+      };
+    });
+  };
+
+  const unassignSectorModule = (sectorId: string, moduleId: string) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.map(s => {
+        if (s.id === sectorId) {
+          const { [moduleId]: removed, ...remainingModules } = s.modules;
+          return { ...s, modules: remainingModules };
+        }
+        return s;
+      })
+    }));
+  };
+
+  const toggleSectorModuleActive = (sectorId: string, moduleId: string) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.map(s => {
+        if (s.id === sectorId && s.modules[moduleId]) {
+          return {
+            ...s,
+            modules: {
+              ...s.modules,
+              [moduleId]: {
+                ...s.modules[moduleId],
+                is_active: !s.modules[moduleId].is_active
+              }
+            }
+          };
+        }
+        return s;
+      })
+    }));
+  };
+
+  const updateSectorModulePrompt = (sectorId: string, moduleId: string, prompt: string) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.map(s => {
+        if (s.id === sectorId && s.modules[moduleId]) {
+          return {
+            ...s,
+            modules: {
+              ...s.modules,
+              [moduleId]: {
+                ...s.modules[moduleId],
+                prompt
+              }
+            }
+          };
+        }
+        return s;
+      })
+    }));
+  };
+
+  const updateSectorModuleConfig = (sectorId: string, moduleId: string, configValues: ModuleConfigValue) => {
+    setState(prev => ({
+      ...prev,
+      sectors: prev.sectors.map(s => {
+        if (s.id === sectorId && s.modules[moduleId]) {
+          return {
+            ...s,
+            modules: {
+              ...s.modules,
+              [moduleId]: {
+                ...s.modules[moduleId],
+                config_values: configValues
+              }
+            }
+          };
+        }
+        return s;
+      })
+    }));
+    setCurrentView({ type: 'sector-assignment', sectorId });
+  };
+
+  // Client module assignment
+  const assignClientModule = (clientId: string, moduleId: string) => {
+    setState(prev => {
+      const client = prev.clients.find(c => c.client_id === clientId);
+      const module = prev.masterModules.find(m => m.id.toString() === moduleId);
+      if (!module || !client) return prev;
+
+      // Check if client has sector and sector has this module
+      const sector = client.sector_id ? prev.sectors.find(s => s.id === client.sector_id) : null;
+      const sectorModuleConfig = sector?.modules[moduleId];
+
+      const configValues: ModuleConfigValue = {};
+      module.config_schema.forEach(field => {
+        // Use sector config as default if available
+        if (sectorModuleConfig && sectorModuleConfig.config_values[field.name] !== undefined) {
+          configValues[field.name] = sectorModuleConfig.config_values[field.name];
+        } else if (field.default !== undefined) {
+          configValues[field.name] = field.default;
+        } else {
+          configValues[field.name] = '';
+        }
+      });
+
+      const moduleInstance: ModuleInstance = {
+        is_active: sectorModuleConfig?.is_active || false,
+        prompt: sectorModuleConfig?.prompt || '',
+        config_values: configValues,
+        is_override: false // Initially not overridden
       };
 
       return {
@@ -110,7 +297,7 @@ export default function App() {
     });
   };
 
-  const unassignModule = (clientId: string, moduleId: string) => {
+  const unassignClientModule = (clientId: string, moduleId: string) => {
     setState(prev => ({
       ...prev,
       clients: prev.clients.map(c => {
@@ -123,7 +310,7 @@ export default function App() {
     }));
   };
 
-  const toggleModuleActive = (clientId: string, moduleId: string) => {
+  const toggleClientModuleActive = (clientId: string, moduleId: string) => {
     setState(prev => ({
       ...prev,
       clients: prev.clients.map(c => {
@@ -134,7 +321,8 @@ export default function App() {
               ...c.modules,
               [moduleId]: {
                 ...c.modules[moduleId],
-                is_active: !c.modules[moduleId].is_active
+                is_active: !c.modules[moduleId].is_active,
+                is_override: true // Toggling makes it an override
               }
             }
           };
@@ -144,7 +332,7 @@ export default function App() {
     }));
   };
 
-  const updateModulePrompt = (clientId: string, moduleId: string, prompt: string) => {
+  const updateClientModulePrompt = (clientId: string, moduleId: string, prompt: string) => {
     setState(prev => ({
       ...prev,
       clients: prev.clients.map(c => {
@@ -155,7 +343,8 @@ export default function App() {
               ...c.modules,
               [moduleId]: {
                 ...c.modules[moduleId],
-                prompt
+                prompt,
+                is_override: true // Editing prompt makes it an override
               }
             }
           };
@@ -165,7 +354,7 @@ export default function App() {
     }));
   };
 
-  const updateModuleConfig = (clientId: string, moduleId: string, configValues: Record<string, any>) => {
+  const updateClientModuleConfig = (clientId: string, moduleId: string, configValues: ModuleConfigValue, isOverride?: boolean) => {
     setState(prev => ({
       ...prev,
       clients: prev.clients.map(c => {
@@ -176,7 +365,8 @@ export default function App() {
               ...c.modules,
               [moduleId]: {
                 ...c.modules[moduleId],
-                config_values: configValues
+                config_values: configValues,
+                is_override: isOverride !== undefined ? isOverride : c.modules[moduleId].is_override
               }
             }
           };
@@ -184,105 +374,135 @@ export default function App() {
         return c;
       })
     }));
-    setCurrentView({ type: 'assignment', clientId });
+    setCurrentView({ type: 'client-assignment', clientId });
   };
 
   // Data operations
   const handleExport = () => {
-    return storage.export();
+    return JSON.stringify(state, null, 2);
   };
 
   const handleImport = (jsonString: string) => {
-    const success = storage.import(jsonString);
-    if (success) {
-      setState(storage.load());
+    try {
+      const imported = JSON.parse(jsonString);
+      setState(imported);
+      return true;
+    } catch (e) {
+      return false;
     }
-    return success;
   };
 
   const handleClear = () => {
-    storage.clear();
-    setState({ clients: [], masterModules: [] });
+    setState({ sectors: [], clients: [], masterModules: [] });
   };
 
   // Navigation
-  const navigateToClients = () => setCurrentView({ type: 'clients' });
-  const navigateToModules = () => setCurrentView({ type: 'modules' });
-  const navigateToDebug = () => setCurrentView({ type: 'debug' });
-  const navigateToAssignment = (clientId: string) => setCurrentView({ type: 'assignment', clientId });
-  const navigateToConfiguration = (clientId: string, moduleId: string) => 
-    setCurrentView({ type: 'configuration', clientId, moduleId });
+  const navigateToPage = (page: string) => {
+    switch (page) {
+      case 'dashboard':
+        setCurrentView({ type: 'dashboard' });
+        break;
+      case 'sectors':
+        setCurrentView({ type: 'sectors' });
+        break;
+      case 'clients':
+        setCurrentView({ type: 'clients' });
+        break;
+      case 'modules':
+        setCurrentView({ type: 'modules' });
+        break;
+      case 'debug':
+        setCurrentView({ type: 'debug' });
+        break;
+    }
+  };
 
-  // Get current client and module for specific views
+  const navigateToSectorAssignment = (sectorId: string) => {
+    setCurrentView({ type: 'sector-assignment', sectorId });
+  };
+
+  const navigateToSectorConfig = (sectorId: string, moduleId: string) => {
+    setCurrentView({ type: 'sector-config', sectorId, moduleId });
+  };
+
+  const navigateToClientAssignment = (clientId: string) => {
+    setCurrentView({ type: 'client-assignment', clientId });
+  };
+
+  const navigateToClientConfig = (clientId: string, moduleId: string) => {
+    setCurrentView({ type: 'client-config', clientId, moduleId });
+  };
+
+  if (!authenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  // Get current entities
+  const getCurrentSector = () => {
+    if (currentView.type === 'sector-assignment' || currentView.type === 'sector-config') {
+      return state.sectors.find(s => s.id === currentView.sectorId);
+    }
+  };
+
   const getCurrentClient = () => {
-    if (currentView.type === 'assignment' || currentView.type === 'configuration') {
+    if (currentView.type === 'client-assignment' || currentView.type === 'client-config') {
       return state.clients.find(c => c.client_id === currentView.clientId);
     }
-    return undefined;
   };
 
   const getCurrentModule = () => {
-    if (currentView.type === 'configuration') {
+    if (currentView.type === 'sector-config') {
       return state.masterModules.find(m => m.id.toString() === currentView.moduleId);
     }
-    return undefined;
+    if (currentView.type === 'client-config') {
+      return state.masterModules.find(m => m.id.toString() === currentView.moduleId);
+    }
+  };
+
+  const getSectorConfigForClient = () => {
+    if (currentView.type === 'client-config') {
+      const client = getCurrentClient();
+      const sector = client?.sector_id ? state.sectors.find(s => s.id === client.sector_id) : null;
+      return sector?.modules[currentView.moduleId]?.config_values;
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Navigation Bar */}
-      <nav className="bg-white shadow-sm border-b">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-blue-600">Modular Analytics Management System</h1>
-            <div className="flex gap-2">
-              <button
-                onClick={navigateToClients}
-                className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-                  currentView.type === 'clients' || currentView.type === 'assignment'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                Clients
-              </button>
-              <button
-                onClick={navigateToModules}
-                className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-                  currentView.type === 'modules'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-              >
-                <Package className="w-4 h-4" />
-                Master Modules
-              </button>
-              <button
-                onClick={navigateToDebug}
-                className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-                  currentView.type === 'debug'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-              >
-                <Database className="w-4 h-4" />
-                Debug
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+      <Sidebar
+        currentPage={currentView.type.split('-')[0]}
+        onNavigate={navigateToPage}
+        onLogout={handleLogout}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode(!darkMode)}
+      />
+      
+      <div className="flex-1 overflow-auto">
+        {currentView.type === 'dashboard' && (
+          <Dashboard
+            state={state}
+            onNavigate={navigateToPage}
+          />
+        )}
 
-      {/* Main Content */}
-      <main>
+        {currentView.type === 'sectors' && (
+          <SectorManagement
+            sectors={state.sectors}
+            onAdd={addSector}
+            onUpdate={updateSector}
+            onDelete={deleteSector}
+            onManageModules={navigateToSectorAssignment}
+          />
+        )}
+
         {currentView.type === 'clients' && (
           <ClientManagement
             clients={state.clients}
+            sectors={state.sectors}
             onAdd={addClient}
             onUpdate={updateClient}
             onDelete={deleteClient}
-            onManageModules={navigateToAssignment}
+            onManageModules={navigateToClientAssignment}
           />
         )}
 
@@ -295,25 +515,52 @@ export default function App() {
           />
         )}
 
-        {currentView.type === 'assignment' && getCurrentClient() && (
-          <ModuleAssignment
-            client={getCurrentClient()!}
+        {currentView.type === 'sector-assignment' && getCurrentSector() && (
+          <SectorModuleAssignment
+            sector={getCurrentSector()!}
             masterModules={state.masterModules}
-            onAssignModule={assignModule}
-            onUnassignModule={unassignModule}
-            onToggleActive={toggleModuleActive}
-            onUpdatePrompt={updateModulePrompt}
-            onConfigureModule={navigateToConfiguration}
-            onBack={navigateToClients}
+            onAssignModule={assignSectorModule}
+            onUnassignModule={unassignSectorModule}
+            onToggleActive={toggleSectorModuleActive}
+            onUpdatePrompt={updateSectorModulePrompt}
+            onConfigureModule={navigateToSectorConfig}
+            onBack={() => navigateToPage('sectors')}
           />
         )}
 
-        {currentView.type === 'configuration' && getCurrentClient() && getCurrentModule() && (
-          <ModuleConfiguration
+        {currentView.type === 'sector-config' && getCurrentSector() && getCurrentModule() && (
+          <ModuleConfigEditor
+            entity={getCurrentSector()!}
+            entityType="sector"
+            moduleId={currentView.moduleId}
+            masterModule={getCurrentModule()!}
+            onSave={(configValues) => updateSectorModuleConfig(currentView.sectorId, currentView.moduleId, configValues)}
+            onBack={() => navigateToSectorAssignment(currentView.sectorId)}
+          />
+        )}
+
+        {currentView.type === 'client-assignment' && getCurrentClient() && (
+          <ModuleAssignment
             client={getCurrentClient()!}
-            module={getCurrentModule()!}
-            onSave={updateModuleConfig}
-            onBack={() => navigateToAssignment(currentView.clientId)}
+            masterModules={state.masterModules}
+            onAssignModule={assignClientModule}
+            onUnassignModule={unassignClientModule}
+            onToggleActive={toggleClientModuleActive}
+            onUpdatePrompt={updateClientModulePrompt}
+            onConfigureModule={navigateToClientConfig}
+            onBack={() => navigateToPage('clients')}
+          />
+        )}
+
+        {currentView.type === 'client-config' && getCurrentClient() && getCurrentModule() && (
+          <ModuleConfigEditor
+            entity={getCurrentClient()!}
+            entityType="client"
+            moduleId={currentView.moduleId}
+            masterModule={getCurrentModule()!}
+            sectorConfig={getSectorConfigForClient()}
+            onSave={(configValues, isOverride) => updateClientModuleConfig(currentView.clientId, currentView.moduleId, configValues, isOverride)}
+            onBack={() => navigateToClientAssignment(currentView.clientId)}
           />
         )}
 
@@ -324,7 +571,7 @@ export default function App() {
             onClear={handleClear}
           />
         )}
-      </main>
+      </div>
     </div>
   );
 }

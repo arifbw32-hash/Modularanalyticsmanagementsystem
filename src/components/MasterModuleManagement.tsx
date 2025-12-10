@@ -77,9 +77,10 @@ export function MasterModuleManagement({
 
   const addField = () => {
     const newField: ConfigSchemaField = {
-      id: `field_${Date.now()}`,
-      type: 'text',
+      name: `field_${Date.now()}`,
       label: 'New Field',
+      type: 'text',
+      required: false,
       default: ''
     };
     setFormData({
@@ -231,7 +232,7 @@ export function MasterModuleManagement({
                                 {field.type}
                               </span>
                               <span>{field.label}</span>
-                              <span className="text-gray-500 text-sm">(ID: {field.id})</span>
+                              <span className="text-gray-500 text-sm">(Name: {field.name})</span>
                             </div>
                             <div className="text-sm text-gray-600 mt-1">
                               Default: {JSON.stringify(field.default)}
@@ -330,11 +331,11 @@ export function MasterModuleManagement({
                     <div key={idx} className="bg-white p-3 rounded border">
                       <div className="grid grid-cols-2 gap-2 mb-2">
                         <div>
-                          <label className="block text-sm text-gray-600 mb-1">Field ID</label>
+                          <label className="block text-sm text-gray-600 mb-1">Field Name</label>
                           <input
                             type="text"
-                            value={field.id}
-                            onChange={(e) => updateField(idx, { id: e.target.value })}
+                            value={field.name}
+                            onChange={(e) => updateField(idx, { name: e.target.value })}
                             className="w-full px-2 py-1 border rounded text-sm"
                           />
                         </div>
@@ -350,6 +351,9 @@ export function MasterModuleManagement({
                             <option value="number">Number</option>
                             <option value="checkbox">Checkbox</option>
                             <option value="select">Select</option>
+                            <option value="multi-select">Multi-Select</option>
+                            <option value="date">Date</option>
+                            <option value="json">JSON</option>
                           </select>
                         </div>
                       </div>
